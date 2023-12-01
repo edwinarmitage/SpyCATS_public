@@ -1,0 +1,1095 @@
+---
+title: "SpyCATS primary results manuscript analysis"
+author: "Edwin P. Armitage"
+format: html
+editor: visual
+---
+
+# Introduction
+
+This file contains the analysis conducted for the SpyCATS study primary results manuscript (Armitage et al., 2023). Data frames used were cleaned and set up separately. Data used here only include necessary variables for the analysis included in this article. Requests for collaboration and access to additional study data can be made to Edwin.Armitage\@lshtm.ac.uk.
+
+## Load necessary packages
+
+```{r}
+require(gtsummary, quietly = TRUE, warn.conflicts = FALSE)
+require(survival, quietly = TRUE, warn.conflicts = FALSE)
+require(popEpi, quietly = TRUE, warn.conflicts = FALSE)
+require(dplyr, quietly = TRUE, warn.conflicts = FALSE)
+require(tidyr, quietly = TRUE, warn.conflicts = FALSE)
+require(ggplot2, quietly = TRUE, warn.conflicts = FALSE)
+```
+
+# Study recruitment numbers
+
+The `enrolment_visits` dataframe contains the date and visit of the first (enrolment) visit of each participant.
+
+```{r}
+load("./Data/enrolment_visits.RData")
+
+head(enrolment_visits)
+
+
+
+```
+
+Total number of participants recruited.
+
+```{r}
+enrolment_visits |>
+  nrow()
+```
+
+Total number of households recruited.
+
+```{r}
+enrolment_visits |>
+  distinct(hid) |>
+  nrow()
+```
+
+Participants recruited at MV0 and dates.
+
+```{r}
+enrolment_visits |>
+  filter(visit == "mv0") |>
+  summarise(recruited_mv0 = n(), start_date = min(date), end_date = max(date))
+```
+
+Participants recruited after MV0 and dates.
+
+```{r}
+enrolment_visits |>
+  filter(visit != "mv0") |>
+  summarise(recruited_after_mv0 = n())
+```
+
+The `final_visits` dataframe contains the dates of all mv12 visits completed.
+
+```{r}
+load("./Data/final_visits.RData")
+
+final_visits |>
+  summarise(completed_mv12 = n(), start_date = min(date), end_date = max(date))
+```
+
+# Demographics
+
+The `demographics` dataframe contains basic demographic information for each participant. N.B. Demogrphic data were not collected for one participant.
+
+Demographic data for participants are included in TableS2.
+
+```{r}
+load("./Data/demographics.RData")
+
+head(demographics)
+
+demographics |>
+  select(!pid & !median_hhsize) |>
+  tbl_summary(
+    label = list(age ~ "Median Age",
+                 age_grp ~ "Age Group",
+                 ethnicity ~ "Ethnicity",
+                 sex ~ "Sex"),
+    statistic = list(all_continuous() ~ "{median} (IQR: {p25}-{p75}, range: {min}-{max})"),
+    missing_text = "(Missing)")
+```
+
+Median household size calculated over number of households, not participants.
+
+```{r}
+demographics |>
+  mutate(hid = substr(pid,1,3)) |>
+  distinct(hid, .keep_all = TRUE) |>
+  select(median_hhsize) |>
+  tbl_summary(
+    label = list(median_hhsize ~ "Median Household Size"),
+    statistic = list(all_continuous() ~ "{median} (IQR: {p25}-{p75}, range: {min}-{max})"))
+```
+
+# Follow up time
+
+Follow up time was calculated separately for carriage and infection, as carriage events could only occur at monthly visits, so unscheduled follow up visits were not included in carriage follow up time. The `infection_long` and `carriage_long` dataframes contain entry and exit points in days from enrolment for each participant, with `gap` indicating whether the period is a gap in follow up.
+
+Infection follow up time.
+
+```{r}
+load("./Data/infection_long.RData")
+
+head(infection_long)
+
+# Gaps in follow up time are where gap == 1, so these are filtered out.
+infection_long |>
+  filter(gap == 0) |>
+  mutate(time = tstop - tstart) |>
+  summarise(follow_up_time = sum(time)/365.25)
+```
+
+Carriage follow up time.
+
+```{r}
+load("./Data/carriage_long.RData")
+
+head(carriage_long)
+
+# Gaps in follow up time are where gap == 1, so these are filtered out.
+carriage_long |>
+  filter(gap == 0) |>
+  mutate(time = tstop - tstart) |>
+  summarise(follow_up_time = sum(time)/365.25)
+```
+
+# Carriage and infection events
+
+Carriage and infection events are defined according to criteria described in the manuscript. The `events` dataframe is a long dataset containing a row for each visit, so multiple rows per participant. Each of the variables `gas_infection`, `gas_carriage`, `gas_pharyngitis`, `gas_pyoderma`, `gas_throat_carriage` and `gas_skin_carriage` are 1 or 0 depending on whether the criteria for an event were met for that participant at that visit. `pharyngitis` and `pyoderma` are 1 or 0 depending on whether the participant was suffering from throat or skin symptoms at that visit.
+
+```{r}
+load("./Data/events.RData")
+
+glimpse(events)
+
+
+```
+
+Total events by event type.
+
+```{r}
+events |>
+  summarise(StrepA_pharyngitis = sum(gas_pharyngitis),
+            StrepA_pyoderma = sum(gas_pyoderma),
+            StrepA_throat_carriage = sum(gas_throat_carriage),
+            StrepA_skin_carriage = sum(gas_skin_carriage))
+```
+
+Checking for simultaneous events.
+
+```{r}
+events |>
+  tbl_cross(
+    row = gas_pharyngitis, 
+    col = gas_pyoderma)
+
+events |>
+  tbl_cross(
+    row = gas_pharyngitis, 
+    col = gas_skin_carriage)
+
+events |>
+  tbl_cross(
+    row = gas_pyoderma, 
+    col = gas_throat_carriage)
+
+events |>
+  tbl_cross(
+    row = gas_pyoderma, 
+    col = gas_skin_carriage)
+```
+
+# Baseline carriage and infection prevalence
+
+Baseline events are defined as carriage or infection that was present at a participant's enrolment visit, whether they enrolled at MV0 or a later MV. The `baseline` dataframe contains each participant's enrolment visit along with variables indicating whether they had infection or carriage at that visit.
+
+```{r}
+load("./Data/baseline.RData")
+
+head(baseline)
+```
+
+Baseline prevalence of carriage and infection.
+
+```{r}
+baseline |>
+  select(contains("gas")) |>
+  tbl_summary(label = list(gas_pharyngitis ~ "StrepA pharyngitis",
+                           gas_throat_carriage ~ "StrepA pharyngeal carriage",
+                           gas_pyoderma ~ "StrepA pyoderma",
+                           gas_skin_carriage ~ "StrepA skin carriage")) |>
+  add_ci(method = list(everything() ~ "exact"))
+```
+
+Baseline carriage and infection by sex.
+
+```{r}
+baseline |>
+  select(sex, contains("gas")) |>
+  tbl_summary(
+    label = list(gas_pharyngitis ~ "StrepA pharyngitis",
+                           gas_throat_carriage ~ "StrepA pharyngeal carriage",
+                           gas_pyoderma ~ "StrepA pyoderma",
+                           gas_skin_carriage ~ "StrepA skin carriage"),
+    by = sex,
+    percent = "column") |>
+  add_ci(method = list(everything() ~ "exact"))
+```
+
+Baseline carriage and infection by age group.
+
+```{r}
+baseline |>
+  select(age_grp, contains("gas")) |>
+  tbl_summary(
+    label = list(gas_pharyngitis ~ "StrepA pharyngitis",
+                           gas_throat_carriage ~ "StrepA pharyngeal carriage",
+                           gas_pyoderma ~ "StrepA pyoderma",
+                           gas_skin_carriage ~ "StrepA skin carriage"),
+    by = age_grp,
+    percent = "column") |>
+  add_ci(method = list(everything() ~ "exact"))
+```
+
+# Monthly carriage prevalence
+
+Monthly carriage prevalence was defined as the proportion of those swabbed at each monthly visit with carriage. In the `monthly_carriage` dataframe, for each participant there is a variable for each monthly visit indicating whether they were positive (`1`) or negative (`0`) for throat carriage or skin carriage, or were absent (`NA`).
+
+```{r}
+load("./Data/monthly_carriage.RData")
+
+head(monthly_carriage)
+```
+
+Monthly pharyngeal carriage prevalence.
+
+```{r}
+monthly_carriage |>
+  select(contains("gas_throat")) |>
+  tbl_summary(
+    label = list(mv0_gas_throat_carriage ~ "MV0",
+                 mv1_gas_throat_carriage ~ "MV1",
+                 mv2_gas_throat_carriage ~ "MV2",
+                 mv3_gas_throat_carriage ~ "MV3",
+                 mv4_gas_throat_carriage ~ "MV4",
+                 mv5_gas_throat_carriage ~ "MV5",
+                 mv6_gas_throat_carriage ~ "MV6",
+                 mv7_gas_throat_carriage ~ "MV7",
+                 mv8_gas_throat_carriage ~ "MV8",
+                 mv9_gas_throat_carriage ~ "MV9",
+                 mv10_gas_throat_carriage ~ "MV10",
+                 mv11_gas_throat_carriage ~ "MV11",
+                 mv12_gas_throat_carriage ~ "MV12"),
+    type = everything() ~ "categorical",
+    missing_text = "(Missing)") |>
+  add_ci(method = list(everything() ~ "exact")) |>
+  modify_caption("**Pharyngeal Carriage**")
+```
+
+Monthly skin carriage prevalence.
+
+```{r}
+monthly_carriage |>
+  select(contains("gas_skin")) |>
+  tbl_summary(
+    label = list(mv0_gas_skin_carriage ~ "MV0",
+                 mv1_gas_skin_carriage ~ "MV1",
+                 mv2_gas_skin_carriage ~ "MV2",
+                 mv3_gas_skin_carriage ~ "MV3",
+                 mv4_gas_skin_carriage ~ "MV4",
+                 mv5_gas_skin_carriage ~ "MV5",
+                 mv6_gas_skin_carriage ~ "MV6",
+                 mv7_gas_skin_carriage ~ "MV7",
+                 mv8_gas_skin_carriage ~ "MV8",
+                 mv9_gas_skin_carriage ~ "MV9",
+                 mv10_gas_skin_carriage ~ "MV10",
+                 mv11_gas_skin_carriage ~ "MV11",
+                 mv12_gas_skin_carriage ~ "MV12"),
+    type = everything() ~ "categorical",
+    missing_text = "(Missing)") |>
+  add_ci(method = list(everything() ~ "exact")) |>
+  modify_caption("**Skin Carriage**")
+```
+
+Mean monthly prevalence.
+
+```{r}
+monthly_carriage |>
+  pivot_longer(contains("gas"), names_to = c("visit",".value"), names_pattern = "([^_]*)_(.*)") |>
+  group_by(visit) |>
+  summarise(
+    throat_carriage = mean(gas_throat_carriage, na.rm = TRUE), 
+    skin_carriage = mean(gas_skin_carriage, na.rm = TRUE),
+    n_throat = sum(!is.na(gas_throat_carriage)),
+    n_skin = sum(!is.na(gas_skin_carriage))) |>
+  summarise(
+    throat_carriage_mean = mean(throat_carriage),
+    skin_carriage_mean = mean(skin_carriage),
+    n_throat_total = sum(n_throat),
+    n_skin_total = sum(n_skin),
+    ci_lower_throat = binom.test(round(throat_carriage_mean * n_throat_total), 
+                                 n_throat_total)$conf.int[1],
+    ci_upper_throat = binom.test(round(throat_carriage_mean * n_throat_total), 
+                                 n_throat_total)$conf.int[2],
+    ci_lower_skin = binom.test(round(skin_carriage_mean * n_skin_total), 
+                               n_skin_total)$conf.int[1],
+    ci_upper_skin = binom.test(round(skin_carriage_mean * n_skin_total), 
+                               n_skin_total)$conf.int[2]) |>
+  print(width = Inf)
+```
+
+# Incidence
+
+Incidence is calculated by using the `tmerge` function of the `survival` package to create long dataframes for each of the relevant events with a row for each timepoint for each participant. This is done separately for each event type to avoid errors. The rate function from popEpi is then used to calculate overall and stratified incidence rates per 1000 person years of follow up.
+
+Any infection incidence.
+
+```{r}
+# merge infection_long and events, keeping only the rows where gas_infection == 1
+incidence_gas_infection <- tmerge(infection_long, events |> filter(gas_infection == 1), 
+                                  id=pid, gas_infection = event(date, gas_infection))
+
+# join incidence_gas_infection with demographics
+incidence_gas_infection <- left_join(incidence_gas_infection, demographics)
+
+# keep only rows where gap == 0, and create a new variable called pyrs, which is the number of years between tstart and tstop
+incidence_gas_infection <- incidence_gas_infection |>
+  filter(gap == 0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+head(incidence_gas_infection)
+
+table1 <- rate(incidence_gas_infection, obs = gas_infection, pyrs = pyrs/1000)
+table2 <- rate(incidence_gas_infection, obs = gas_infection, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_gas_infection, obs = gas_infection, pyrs = pyrs/1000, print = age_grp)
+
+round_fun <- function(table) {
+  
+  table |>
+    mutate(
+    rate = round(as.numeric(rate)),
+    rate.lo = round(as.numeric(rate.lo)),
+    rate.hi = round(as.numeric(rate.hi)))
+  
+}
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+
+```
+
+Pharyngitis incidence.
+
+```{r}
+incidence_gas_pharyngitis <- tmerge(infection_long, events |> filter(gas_pharyngitis == 1), 
+                                  id=pid, gas_pharyngitis = event(date, pharyngitis))
+
+incidence_gas_pharyngitis <- left_join(incidence_gas_pharyngitis, demographics)
+
+incidence_gas_pharyngitis <- incidence_gas_pharyngitis |>
+  filter(gap == 0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+table1 <- rate(incidence_gas_pharyngitis, obs = gas_pharyngitis, pyrs = pyrs/1000)
+table2 <- rate(incidence_gas_pharyngitis, obs = gas_pharyngitis, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_gas_pharyngitis, obs = gas_pharyngitis, pyrs = pyrs/1000, print = age_grp)
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+
+gas_pharyngitis_cases <- pull(table1[1,1])
+```
+
+Pyoderma incidence.
+
+```{r}
+incidence_gas_pyoderma <- tmerge(infection_long, events |> filter(gas_pyoderma == 1), 
+                                  id=pid, gas_pyoderma = event(date, gas_pyoderma))
+
+incidence_gas_pyoderma <- left_join(incidence_gas_pyoderma, demographics)
+
+incidence_gas_pyoderma <- incidence_gas_pyoderma |>
+  filter(gap == 0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+table1 <- rate(incidence_gas_pyoderma, obs = gas_pyoderma, pyrs = pyrs/1000)
+table2 <- rate(incidence_gas_pyoderma, obs = gas_pyoderma, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_gas_pyoderma, obs = gas_pyoderma, pyrs = pyrs/1000, print = age_grp)
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+
+gas_pyoderma_cases <- pull(table1[1,1])
+```
+
+Carriage incidence is calculated in the same way but using the `carriage_long` dataframe.
+
+Throat or skin carriage incidence.
+
+```{r}
+incidence_gas_carriage <- tmerge(carriage_long, events |> filter(gas_carriage == 1), id=pid,
+                                gas_carriage = event(date, gas_carriage))   
+incidence_gas_carriage <- left_join(incidence_gas_carriage, demographics)
+
+incidence_gas_carriage <- incidence_gas_carriage |>
+  filter(gap ==0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+table1 <- rate(incidence_gas_carriage, obs = gas_carriage, pyrs = pyrs/1000)
+table2 <- rate(incidence_gas_carriage, obs = gas_carriage, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_gas_carriage, obs = gas_carriage, pyrs = pyrs/1000, print = age_grp)
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+```
+
+Throat carriage incidence.
+
+```{r}
+incidence_gas_throat_carriage <- tmerge(carriage_long, events |> filter(gas_throat_carriage == 1), id=pid,
+                                gas_throat_carriage = event(date, gas_throat_carriage))   
+incidence_gas_throat_carriage <- left_join(incidence_gas_throat_carriage, demographics)
+
+incidence_gas_throat_carriage <- incidence_gas_throat_carriage |>
+  filter(gap ==0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+table1 <- rate(incidence_gas_throat_carriage, obs = gas_throat_carriage, pyrs = pyrs/1000)
+table2 <- rate(incidence_gas_throat_carriage, obs = gas_throat_carriage, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_gas_throat_carriage, obs = gas_throat_carriage, pyrs = pyrs/1000, print = age_grp)
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+```
+
+Skin carriage incidence.
+
+```{r}
+incidence_gas_skin_carriage <- tmerge(carriage_long, events |> filter(gas_skin_carriage == 1), id=pid,
+                                gas_skin_carriage = event(date, gas_skin_carriage))   
+incidence_gas_skin_carriage <- left_join(incidence_gas_skin_carriage, demographics)
+
+incidence_gas_skin_carriage <- incidence_gas_skin_carriage |>
+  filter(gap ==0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+table1 <- rate(incidence_gas_skin_carriage, obs = gas_skin_carriage, pyrs = pyrs/1000)
+table2 <- rate(incidence_gas_skin_carriage, obs = gas_skin_carriage, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_gas_skin_carriage, obs = gas_skin_carriage, pyrs = pyrs/1000, print = age_grp)
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+```
+
+We also calculate the number of incident clinical pharyngitis and pyoderma events (including those where StrepA was not isolated).
+
+```{r}
+incidence_clinical_events <- events |>
+  mutate(clinical_infection = ifelse(pharyngitis == 1 | pyoderma == 1, 1, 0))
+
+incidence_clinical_events <- tmerge(infection_long, incidence_clinical_events |> 
+                                      filter(clinical_infection == 1), id=pid,
+                                    clinical_infection = event(date, clinical_infection)) 
+
+incidence_clinical_events <- left_join(incidence_clinical_events, demographics)
+
+incidence_clinical_events <- incidence_clinical_events |>
+  filter(gap == 0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+table1 <- rate(incidence_clinical_events, obs = clinical_infection, pyrs = pyrs/1000)
+table2 <- rate(incidence_clinical_events, obs = clinical_infection, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_clinical_events, obs = clinical_infection, pyrs = pyrs/1000, print = age_grp)
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+```
+
+Clinical pharyngitis events.
+
+```{r}
+incidence_clinical_events <- events |>
+  mutate(clinical_pharyngitis = ifelse(pharyngitis == 1, 1, 0))
+
+incidence_clinical_events <- tmerge(infection_long, incidence_clinical_events |> 
+                                      filter(clinical_pharyngitis == 1), id=pid,
+                                    clinical_pharyngitis = event(date, clinical_pharyngitis)) 
+
+incidence_clinical_events <- left_join(incidence_clinical_events, demographics)
+
+incidence_clinical_events <- incidence_clinical_events |>
+  filter(gap == 0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+table1 <- rate(incidence_clinical_events, obs = clinical_pharyngitis, pyrs = pyrs/1000)
+table2 <- rate(incidence_clinical_events, obs = clinical_pharyngitis, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_clinical_events, obs = clinical_pharyngitis, pyrs = pyrs/1000, print = age_grp)
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+
+clinical_pharyngitis_cases <- pull(table1[1,1])
+```
+
+Clinical pyoderma events.
+
+```{r}
+incidence_clinical_events <- events |>
+  mutate(clinical_pyoderma = ifelse(pyoderma == 1, 1, 0))
+
+incidence_clinical_events <- tmerge(infection_long, incidence_clinical_events |> 
+                                      filter(clinical_pyoderma == 1), id=pid,
+                                    clinical_pyoderma = event(date, clinical_pyoderma)) 
+
+incidence_clinical_events <- left_join(incidence_clinical_events, demographics)
+
+incidence_clinical_events <- incidence_clinical_events |>
+  filter(gap == 0) |>
+  mutate(pyrs = (tstop - tstart) / 365.25)
+
+table1 <- rate(incidence_clinical_events, obs = clinical_pyoderma, pyrs = pyrs/1000)
+table2 <- rate(incidence_clinical_events, obs = clinical_pyoderma, pyrs = pyrs/1000, print = sex)
+table3 <- rate(incidence_clinical_events, obs = clinical_pyoderma, pyrs = pyrs/1000, print = age_grp)
+
+round_fun(table1)
+round_fun(table2)
+round_fun(table3)
+
+clinical_pyoderma_cases <- pull(table1[1,1])
+```
+
+Proportion of clinical events positive for StrepA.
+
+```{r}
+
+# proportion of pharyngitis cases positive for StrepA
+round((gas_pharyngitis_cases / clinical_pharyngitis_cases)*100, digits = 1)
+
+# proportion of pyoderma cases positive for StrepA
+round((gas_pyoderma_cases / clinical_pyoderma_cases)*100, digits = 1)
+```
+
+# Clearance time
+
+The definition for clearance time episodes is described in the manuscript. The `gas_throat_clearance` and `gas_skin_clearance` dataframes contain data on each clearance time episode. For each episode there is a start time (`startdate`), end time (`enddate`), and the time of the next negative swab from that site (`nextneg`). Each episode also contains information about symptoms and antibiotic use, as well as what *emm* type it was.
+
+```{r}
+load("./Data/gas_throat_clearance.RData")
+
+print(head(gas_throat_clearance), width = Inf)
+
+```
+
+Number of throat clearance episodes, and number of participants.
+
+```{r}
+
+gas_throat_clearance |>
+  nrow()
+
+gas_throat_clearance |>
+  distinct(pid) |>
+  nrow()
+```
+
+Number of skin clearance episodes, and number of participants.
+
+```{r}
+load("./Data/gas_skin_clearance.RData")
+
+gas_skin_clearance |>
+  nrow()
+
+gas_skin_clearance |>
+  distinct(pid) |>
+  nrow()
+```
+
+Histogram of throat clearance episodes.
+
+```{r}
+ggplot(data = gas_throat_clearance, aes(x = time)) +
+  geom_histogram(binwidth = 1.5, boundary = 0, fill = "indianred", color = "white") +
+  labs(title = "A", x = "Days", y = "Frequency") +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(face = "bold", size = 12),
+        axis.text = element_text(size = 10),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        axis.line = element_line(size = 0.5, color = "black"),
+        legend.position = "none")
+```
+
+Histogram of skin clearance episodes.
+
+```{r}
+ggplot(data = gas_skin_clearance, aes(x = time)) +
+  geom_histogram(binwidth = 1, boundary = 0, fill = "indianred", color = "white") +
+  labs(title = "B", x = "Days", y = "Frequency") +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(face = "bold", size = 12),
+        axis.text = element_text(size = 10),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        axis.line = element_line(size = 0.5, color = "black"),
+        legend.position = "none")
+```
+
+Median throat clearance time and range.
+
+```{r}
+gas_throat_clearance |>
+  reframe(median = median(time), range = range(time))
+```
+
+Median skin clearance time and range.
+
+```{r}
+gas_skin_clearance |>
+  reframe(median = median(time), range = range(time))
+```
+
+Wilcoxon Rank Sum of difference between throat and skin clearance time.
+
+```{r}
+wilcox.test(gas_skin_clearance$time,gas_throat_clearance$time)
+```
+
+Antibiotic prescribing at the start of throat clearance episodes.
+
+```{r}
+gas_throat_clearance |>
+  filter(abx_start == 1) |>
+  print(width = Inf)
+
+
+         
+```
+
+Antibiotic prescribing at the end of throat clearance episodes.
+
+```{r}
+gas_throat_clearance |>
+  filter(abx == 1) |>
+  print(width = Inf)
+```
+
+Pyoderma symptoms at the start of skin clearance episodes.
+
+```{r}
+gas_skin_clearance |>
+  filter(sx_start == 1) |>
+  print(width = Inf)
+```
+
+Pyoderma symptoms and antibiotic prescribing at the start of skin clearance episodes.
+
+```{r}
+gas_skin_clearance |>
+  filter(sx_start == 1 & abx_start == 1) |>
+  print(width = Inf)
+```
+
+Single visit skin clearance episodes with symptoms and antibiotics at the start.
+
+```{r}
+gas_skin_clearance |>
+  filter(sx_start == 1 & abx_start == 1 & startdate == enddate) |>
+  print(width = Inf)
+```
+
+Other symptoms (pharyngitis) and antibiotic prescribing at the start of skin clearance episodes.
+
+```{r}
+# Other symptoms at start of episode
+gas_skin_clearance |>
+  filter(sx_start == 0 & abx_start == 1) |>
+  print(width = Inf)
+```
+
+Any antibiotic prescribing for skin clearance episodes.
+
+```{r}
+gas_skin_clearance |>
+  filter(any_abx == 1) |>
+  print(width = Inf)
+```
+
+Any antibiotic prescribing for throat clearance episodes.
+
+```{r}
+gas_throat_clearance |>
+  filter(any_abx == 1) |>
+  print(width = Inf)
+```
+
+Wilcox test for difference in antibiotic prescribing between throat and skin clearance episodes.
+
+```{r}
+wilcox.test(gas_skin_clearance$any_abx,gas_throat_clearance$any_abx)
+```
+
+Wilcox test for antibiotic use impact on throat clearance episode length.
+
+```{r}
+gas_throat_clearance %>%
+  group_by(any_abx) %>%
+  summarise(nrow = table(any_abx),
+            median = median(time))
+
+wilcox.test(time ~ any_abx, data = gas_throat_clearance)
+
+```
+
+Wilcox test for antibiotic use impact on skin clearance episode length.
+
+```{r}
+gas_skin_clearance |>
+  group_by(any_abx) |>
+  summarise(nrow = table(any_abx),
+            median = median(time))
+
+wilcox.test(time ~ any_abx, data = gas_skin_clearance)
+```
+
+# Demographic risk factors for carriage and infection
+
+The `events_long` dataframe is a long dataframe set up using `tmerge` to allow for survival (time-to-event) analysis for each of the relevant events. For each participant, the time period between each visit is a row of the dataframe with a start time (`tstart`) and stop time (`tstop`). `gap` indicates whether the period was a gap in follow up or not (these will be filtered out before the analysis. The events (`gas_pharyngitis`, `gas_throat_carriage`, `gas_pyoderma` and `gas_skin_carriage`) are coded as "events" whereby for example if an event occurred at timepoint 65, the event will be positive (`1`) for the row where `tstop` is 65. Rainy season (`rain`) and household size (`hhsize`) are coded as time-varying covariates whereby they change over time for each participants. Age group (`age_grp)` and sex (`sex`) are constant covariates that do not change. Household ID number is represented by `hid` while `pid` is the participant ID number.
+
+```{r}
+load("./Data/events_long.RData")
+
+head(events_long)
+
+```
+
+Using the `coxph` command in the `survival` package, we can perform Andersen-Gill regression, which is as extension of the Cox Proportional Hazards regression model which allows for recurrent events (assuming independence between events) by including `pid` in the model, accounts for household clustering by including `hid` in the model and uses robust standard errors. Age group, sex, household size and season are all added to the multivariable model for each event.
+
+First we filter out gaps in follow up, then we write a function to perform the analysis.
+
+```{r}
+events_long <- events_long |>
+  filter(gap == 0) |>
+  select(!gap)
+
+coxag <- function(outcome,data) {
+  
+  outcome <- substitute(outcome)
+  
+  model <- coxph(Surv(tstart, tstop, eval(outcome, data)) ~ rain + sex + age_grp + hhsize, cluster = hid, id = pid, data = data)
+  tb <- model |>
+    tbl_regression(exponentiate = TRUE,
+                   label = list(rain ~ "Rainy season", age_grp ~ "Age Group", sex ~ "Sex", hhsize ~ "Household size")) |>
+    add_nevent() |>
+    add_global_p() |>
+    bold_labels() |>
+    bold_p(t = 0.05) |>
+    modify_header(list(label ~ "**Characteristic**"))
+  tb
+  
+}
+```
+
+Then run the function for each event.
+
+Pharyngeal carriage.
+
+```{r}
+coxag(gas_throat_carriage, events_long)
+```
+
+Skin carriage.
+
+```{r}
+coxag(gas_skin_carriage, events_long)
+```
+
+Pharyngitis.
+
+```{r}
+coxag(gas_pharyngitis, events_long)
+```
+
+Pyoderma.
+
+```{r}
+coxag(gas_pyoderma, events_long)
+```
+
+# *Emm*-type diversity
+
+The dataframe `emm_types` contains emm-typing data from all of the available isolates.
+
+```{r}
+load("./Data/emm_types.RData")
+
+head(emm_types)
+```
+
+Number of StrepA isolates successfully regrown and sent to MBLB.
+
+```{r}
+emm_types |>
+  filter(mrc_species == 1) |>
+  nrow()
+```
+
+Number of isolates with no growth at MBLB.
+
+```{r}
+emm_types |>
+  filter(mrc_species == 1 & no_growth == 1) |>
+  nrow()
+```
+
+Number of isolates latex tested as non-Group A Streptococcus at MBLB.
+
+```{r}
+emm_types |>
+  filter(mrc_species == 1 & species_change == 1) |>
+  nrow()
+```
+
+Number of StrepA isolates successfully emm-typed.
+
+```{r}
+emm_types |>
+  filter(brussels_species == 1) |>
+  nrow()
+```
+
+Number of unique emm-types.
+
+```{r}
+emm_types |>
+  filter(brussels_species == 1) |>
+  distinct(emm_type) |>
+  nrow()
+```
+
+Number of new emm sub-types.
+
+```{r}
+emm_types |>
+  filter(brussels_species == 1 & new_subtype == 1) |>
+  nrow()
+```
+
+The dataframe `event_list` contains details with emm-type of each StrepA event identified.
+
+```{r}
+load("./Data/event_list.RData")
+
+head(event_list)
+```
+
+Number of events with emm-typed isolate.
+
+```{r}
+event_list |>
+  filter(emm_type != "nt") |>
+  nrow()
+```
+
+# Household secondary attack rate
+
+The dataframe `between_visit_linked_events` contains data on how many people were swabbed from the same household within 3-42 days after a StrepA event, and how many were of the same emm-type.
+
+```{r}
+load("./Data/between_visit_linked_events.RData")
+
+head(between_visit_linked_events)
+```
+
+Total number of "index" events - events where someone in the household was swabbed 3-42 days later.
+
+```{r}
+between_visit_linked_events |>
+  nrow()
+```
+
+Total number of "index" events by event type.
+
+```{r}
+between_visit_linked_events |>
+  group_by(type) |>
+  summarise(n = n())
+```
+
+Total number of "epidemiologically linked" (not necessarily of the same emm-type) secondary events that occurred.
+
+```{r}
+between_visit_linked_events |>
+  summarise(x = sum(total_sec_pos))
+```
+
+Total number of "epidemiologically linked" secondary events by index event type.
+
+```{r}
+between_visit_linked_events |>
+  group_by(type) |>
+  summarise(x = sum(total_sec_pos))
+```
+
+Total number of "emm-type linked" (of the same emm-type) secondary events that occurred.
+
+```{r}
+between_visit_linked_events |>
+  summarise(x = sum(total_sec_pos_emm))
+```
+
+Total number of "emm-type linked" secondary events by index event type.
+
+```{r}
+between_visit_linked_events |>
+  group_by(type) |>
+  summarise(x = sum(total_sec_pos_emm))
+```
+
+Mean household secondary attack rate (HSAR) with confidence intervals for epidemiologically linked and emm-type linked events.
+
+```{r}
+between_visit_linked_events |>
+  mutate(sar = total_sec_pos / total_people_swabbed * 100,
+         sar_emm = total_sec_pos_emm / total_people_swabbed * 100) |>
+  summarise(mean_sar = mean(sar),
+            mean_sar_emm = mean(sar_emm),
+            n = n(),
+            sd1 = sd(sar),
+            sd2 = sd(sar_emm)) |>
+  mutate(
+    se1 = sd1 / sqrt(n),
+    lower_ci1 = mean_sar - qt(0.975, df = n - 1) * se1,
+    upper_ci1 = mean_sar + qt(0.975, df = n - 1) * se1,
+    se2 = sd2 / sqrt(n),
+    lower_ci2 = mean_sar_emm - qt(0.975, df = n - 1) * se2,
+    upper_ci2 = mean_sar_emm + qt(0.975, df = n - 1) * se2)
+```
+
+Mean household secondary attack rate (HSAR) with confidence intervals for epidemiologically linked and emm-type linked events by index event type.
+
+```{r}
+between_visit_linked_events |>
+  group_by(type) |>
+  mutate(sar = total_sec_pos / total_people_swabbed * 100,
+         sar_emm = total_sec_pos_emm / total_people_swabbed * 100) |>
+  summarise(mean_sar = mean(sar),
+            mean_sar_emm = mean(sar_emm),
+            n = n(),
+            sd1 = sd(sar),
+            sd2 = sd(sar_emm)) |>
+  mutate(
+    se1 = sd1 / sqrt(n),
+    lower_ci1 = mean_sar - qt(0.975, df = n - 1) * se1,
+    upper_ci1 = mean_sar + qt(0.975, df = n - 1) * se1,
+    se2 = sd2 / sqrt(n),
+    lower_ci2 = mean_sar_emm - qt(0.975, df = n - 1) * se2,
+    upper_ci2 = mean_sar_emm + qt(0.975, df = n - 1) * se2)
+```
+
+# Household transmission of *emm*-types
+
+The within_visit_linkages dataframe contains details of all linkages that occurred of identical emm-type within a 0-2 day period - where directionality is not possible to determine.
+
+```{r}
+load(file = "./Data/within_visit_linkages.RData")
+
+head(within_visit_linkages)
+```
+
+The between_visit_linkages dataframe contains details of all linkages that occurred of identical emm-type within a 3-42 day period - where directionality is known.
+
+```{r}
+load(file = "./Data/between_visit_linkages.RData")
+
+head(between_visit_linkages)
+```
+
+Number of within-visit linkages.
+
+```{r}
+within_visit_linkages |>
+  nrow()
+```
+
+Number of between-visit linkages.
+
+```{r}
+between_visit_linkages |>
+  nrow()
+```
+
+Within-visit linkages by source and recipient event type (though directionality unknown).
+
+```{r}
+within_visit_linkages |>
+  tbl_cross(
+    col = source_event_type,
+    row = recipient_event_type, percent = "cell")
+```
+
+Between-visit linkages by source and recipient event type.
+
+```{r}
+between_visit_linkages |>
+  tbl_cross(
+    col = source_event_type,
+    row = recipient_event_type, percent = "cell")
+```
+
+Median serial interval for between visit linkages.
+
+```{r}
+between_visit_linkages |>
+  summarise(median = median(lag))
+```
+
+Median serial interval by source event.
+
+```{r}
+between_visit_linkages |>
+  group_by(source_event_type) |>
+  summarise(med = median(lag))
+```
+
+The dataframes `within_visit_translocations` and `between_visit_translocations` contain details of occasions where a change of event type occurred in one individiaul within the defined transmission windows.
+
+```{r}
+load(file = "./Data/within_visit_translocations.RData")
+
+load(file = "./Data/between_visit_translocations.RData")
+
+head(within_visit_translocations)
+
+head(between_visit_translocations)
+```
+
+Number of within-visit translocations.
+
+```{r}
+within_visit_translocations |>
+  nrow()
+```
+
+Number of between-visit translocations.
+
+```{r}
+between_visit_translocations |>
+  nrow()
+```
+
+Within-visit translocation source/recipient sites.
+
+```{r}
+within_visit_translocations |>
+  tbl_cross(
+    col = source_event_type,
+    row = recipient_event_type, percent = "cell")
+```
+
+Between-visit translocation source/recipient sites.
+
+```{r}
+between_visit_translocations |>
+  tbl_cross(
+    col = source_event_type,
+    row = recipient_event_type, percent = "cell")
+```
