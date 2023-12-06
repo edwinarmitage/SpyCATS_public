@@ -1,1 +1,27 @@
+name: Publish Quarto Document
+
+on:
+  push:
+    branches:
+      - main  # or your default branch
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+
+    - name: Setup Quarto
+      uses: r-lib/actions/setup-quarto@v1
+
+    - name: Render Quarto Document
+      run: quarto render 'SpyCATS primary results manuscript analysis.qmd' --to html
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./  # specify the directory where your HTML file is generated
 
